@@ -1,0 +1,79 @@
+@startuml
+
+
+title Publish Event to 3rd Party
+participant "Consumer" as c
+participant "CommandHandler" as ch
+participant "Aggregate" as a
+participant "AggregateStore" as as
+participant "EventStore" as es
+database "events" as db
+participant "EventBus" as eb
+participant "EventHandler" as eh
+participant "Projector" as projector
+participant "Repo" as repo
+participant "Saga" as saga
+database "todos" as todos
+
+
+== Write ==
+c -> ch: Command
+note right of c
+add_item
+aggregateId
+desc
+end note
+ch -> as: h.as.Load(aggregateId, aggregateType)
+as -> es: eventstore.Load(aggregateId)
+es -> db:
+db -> es:
+es -> as: return all events\nfor given aggregateId
+as -> as: applyEvents (Aggregate, events[])
+note right of as
+rebuild aggregate (versioned) from events
+end note
+as -> ch: return an aggregate
+ch -> a: a.HandleCommand()
+a -> a: StoreEvent()
+note right of a
+"aggregate_type": "todolist"
+"event_type":"todolist:item_added"
+"version": a.Version()+len(a.events)+1
+"timestamp": now
+end note
+a -> ch:
+
+ch -> as: h.as.Save()
+as -> es: as.es.Save(events, version)
+es -> db: Save()
+note right of es
+version == 0, create new aggregate
+
+version > 0, append to existing
+only when aggregateId&version match
+end note
+db -> es:
+es -> as:
+as --> eb: publish domain events
+as -> ch:
+ch -> c:
+
+
+
+== Read ==
+eb -> eh: subscribe domain event
+
+eh -> repo: find() the entity by\ne.aggregateId & e.version-1
+repo -> todos:
+todos --> repo
+repo --> eh: return an entity
+eh -> projector: project(event, entity)
+projector --> eh: return projected entity\nversion++, updatedAt=Now
+eh -> repo: Save(newEntity) \n when newEntity.version = event.version
+repo -> todos:
+todos --> repo:
+repo --> eh:
+
+
+
+@enduml
